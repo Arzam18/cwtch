@@ -103,7 +103,7 @@ ANDROID_TOOLCHAIN := $(ANDROID_NDK_HOME)/toolchains/llvm/prebuilt/linux-x86_64/b
 ANDROID_CC := $(ANDROID_TOOLCHAIN)/aarch64-linux-android$(ANDROID_API)-clang
 ANDROID_AR := $(ANDROID_TOOLCHAIN)/llvm-ar
 ANDROID_ZSTD_DIR ?= $(CURDIR)/build-android/zstd
-ANDROID_CFLAGS := -Wall -Wextra -O3 -flto -std=c11 -funroll-loops -march=armv8.2-a+dotprod -mtune=cortex-a76 -DBUILD=\\"$(VERSION)\\" -I$(ANDROID_ZSTD_DIR)/include
+ANDROID_CFLAGS := -Wall -Wextra -O3 -flto -std=c11 -funroll-loops -march=armv8.2-a+dotprod -mtune=cortex-a76 -DBUILD=\"$(VERSION)\" -I$(ANDROID_ZSTD_DIR)/include
 ANDROID_LDFLAGS := -flto -lm -pthread -L$(ANDROID_ZSTD_DIR)/lib -lzstd
 
 ARM32_ZSTD_LIB_DIR := /opt/arm-zstd/lib
