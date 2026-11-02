@@ -1,0 +1,60 @@
+name: Android ARM64
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Download Android NDK r27c
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 \
+            https://dl.google.com/android/repository/android-ndk-r27c-linux.zip \
+            -o "$RUNNER_TEMP/android-ndk.zip"
+          unzip -q "$RUNNER_TEMP/android-ndk.zip" -d "$GITHUB_WORKSPACE"
+          echo "ANDROID_NDK_HOME=$GITHUB_WORKSPACE/android-ndk-r27c" >> "$GITHUB_ENV"
+
+      - name: Build zstd for Android ARM64
+        shell: bash
+        run: |
+          set -euo pipefail
+          NDK="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          export CC="$NDK/aarch64-linux-android24-clang"
+          export AR="$NDK/llvm-ar"
+          git clone --depth 1 --branch v1.5.7 https://github.com/facebook/zstd.git "$RUNNER_TEMP/zstd"
+          make -C "$RUNNER_TEMP/zstd/lib" libzstd.a \
+            CC="$CC" AR="$AR" CFLAGS="-O3 -fPIC"
+          mkdir -p build-android/zstd/include build-android/zstd/lib
+          cp "$RUNNER_TEMP/zstd/lib/libzstd.a" build-android/zstd/lib/
+          cp "$RUNNER_TEMP/zstd/lib/zstd.h" \
+             "$RUNNER_TEMP/zstd/lib/zstd_errors.h" \
+             "$RUNNER_TEMP/zstd/lib/zdict.h" build-android/zstd/include/
+
+      - name: Build Cwtch Android ARM64 NEON
+        run: |
+          set -euo pipefail
+          test -s quantised.bin || {
+            echo "::error::quantised.bin is missing. Cwtch embeds this NNUE network at compile time; add the engine's network file to the repository (or enable Git LFS)."
+            exit 1
+          }
+          make android-arm64 \
+            ANDROID_NDK_HOME="$ANDROID_NDK_HOME" \
+            ANDROID_ZSTD_DIR="$GITHUB_WORKSPACE/build-android/zstd"
+
+      - name: Upload Android engine
+        uses: actions/upload-artifact@v4
+        with:
+          name: cwtch-android-arm64-neon
+          path: releases/cwtch_*_android_arm64_neon
+          if-no-files-found: error
