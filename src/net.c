@@ -7,6 +7,9 @@
 #include <immintrin.h>
 #include <cpuid.h>
 #endif
+#if defined(__aarch64__) || defined(_M_ARM64)
+#include <arm_neon.h>
+#endif
 #ifdef __linux__
 #include <sys/mman.h>
 #endif
@@ -312,6 +315,56 @@ TARGET_ATTR static void net_slow_rebuild_accs_##SUFFIX(Node *node) { \
 // Baseline scalar / SSE2 kernels
 DEFINE_ACC_KERNELS(scalar, )
 
+
+#if defined(__aarch64__) || defined(_M_ARM64)
+// AArch64 guarantees Advanced SIMD (NEON). Keep accumulator updates in the
+// same kernel family as the scalar implementation; the compiler vectorizes
+// their contiguous int16_t operations for the NEON target.
+DEFINE_ACC_KERNELS(neon, )
+
+static int net_eval_neon(Node *node) {
+  const int stm = node->pos.stm;
+  const int ob = (popcount(node->pos.occupied) - 2) / NET_O_DIV;
+
+  const int16_t *const restrict a1 = (stm == 0 ? node->accs[0] : node->accs[1]);
+  const int16_t *const restrict a2 = (stm == 0 ? node->accs[1] : node->accs[0]);
+
+  const int16_t *const restrict w1 = &net_o_w[ob * NET_H1_SIZE * 2];
+  const int16_t *const restrict w2 = w1 + NET_H1_SIZE;
+
+  const int16x8_t zero = vdupq_n_s16(0);
+  const int16x8_t qa = vdupq_n_s16(NET_QA);
+  int32x4_t sum1 = vdupq_n_s32(0);
+  int32x4_t sum2 = vdupq_n_s32(0);
+
+  for (int i = 0; i < NET_H1_SIZE; i += 8) {
+    int16x8_t v1 = vld1q_s16(&a1[i]);
+    int16x8_t v2 = vld1q_s16(&a2[i]);
+    const int16x8_t u1 = vld1q_s16(&w1[i]);
+    const int16x8_t u2 = vld1q_s16(&w2[i]);
+
+    v1 = vminq_s16(vmaxq_s16(v1, zero), qa);
+    v2 = vminq_s16(vmaxq_s16(v2, zero), qa);
+
+    const int16x8_t vw1 = vmulq_s16(v1, u1);
+    const int16x8_t vw2 = vmulq_s16(v2, u2);
+
+    sum1 = vmlal_s16(sum1, vget_low_s16(vw1), vget_low_s16(v1));
+    sum1 = vmlal_s16(sum1, vget_high_s16(vw1), vget_high_s16(v1));
+    sum2 = vmlal_s16(sum2, vget_low_s16(vw2), vget_low_s16(v2));
+    sum2 = vmlal_s16(sum2, vget_high_s16(vw2), vget_high_s16(v2));
+  }
+
+  int64_t acc = (int64_t)vaddvq_s32(sum1) + (int64_t)vaddvq_s32(sum2);
+  acc /= NET_QA;
+  acc += net_o_b[ob];
+  acc *= NET_SCALE;
+  acc /= NET_QAB;
+
+  return (int)acc;
+}
+#endif
+
 static int net_eval_scalar(Node *node) {
   const int stm = node->pos.stm;
   const int ob = (popcount(node->pos.occupied) - 2) / NET_O_DIV;
@@ -612,6 +665,13 @@ int net_set_simd(const char *name) {
       return 0;
     }
 #endif
+#if defined(__aarch64__) || defined(_M_ARM64)
+    active_net_eval          = net_eval_neon;
+    active_update_accs       = update_accs_neon;
+    active_slow_rebuild_accs = net_slow_rebuild_accs_neon;
+    active_simd_name         = "neon";
+    return 0;
+#endif
     active_net_eval          = net_eval_scalar;
     active_update_accs       = update_accs_scalar;
     active_slow_rebuild_accs = net_slow_rebuild_accs_scalar;
@@ -651,6 +711,15 @@ int net_set_simd(const char *name) {
     active_update_accs       = update_accs_avx512;
     active_slow_rebuild_accs = net_slow_rebuild_accs_avx512;
     active_simd_name         = "avx512_vnni";
+    return 0;
+  }
+#endif
+#if defined(__aarch64__) || defined(_M_ARM64)
+  if (strcasecmp(name, "neon") == 0 || strcasecmp(name, "arm_neon") == 0) {
+    active_net_eval          = net_eval_neon;
+    active_update_accs       = update_accs_neon;
+    active_slow_rebuild_accs = net_slow_rebuild_accs_neon;
+    active_simd_name         = "neon";
     return 0;
   }
 #endif
