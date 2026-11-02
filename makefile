@@ -96,6 +96,16 @@ ARM32_ARCHES := armv6 armv7_neon
 ARM_CC_32 := arm-none-linux-gnueabihf-gcc
 ARM_CC_64 := aarch64-linux-gnu-gcc
 
+# Android ARM64 (NDK Clang + a statically built zstd)
+ANDROID_API := 24
+ANDROID_NDK_HOME ?= $(ANDROID_NDK_ROOT)
+ANDROID_TOOLCHAIN := $(ANDROID_NDK_HOME)/toolchains/llvm/prebuilt/linux-x86_64/bin
+ANDROID_CC := $(ANDROID_TOOLCHAIN)/aarch64-linux-android$(ANDROID_API)-clang
+ANDROID_AR := $(ANDROID_TOOLCHAIN)/llvm-ar
+ANDROID_ZSTD_DIR ?= $(CURDIR)/build-android/zstd
+ANDROID_CFLAGS := -Wall -Wextra -O3 -flto -std=c11 -funroll-loops -march=armv8.2-a+dotprod -mtune=cortex-a76 -DBUILD=\\"$(VERSION)\\" -I$(ANDROID_ZSTD_DIR)/include
+ANDROID_LDFLAGS := -flto -lm -pthread -L$(ANDROID_ZSTD_DIR)/lib -lzstd
+
 ARM32_ZSTD_LIB_DIR := /opt/arm-zstd/lib
 ARM32_ZSTD_INC_DIR := /opt/arm-zstd/include
 
@@ -104,7 +114,7 @@ ARM32_ZSTD_INC_DIR := /opt/arm-zstd/include
 # ===========================================================================
 .PHONY: all win universal universal-win clean rebuild debug test \
         release release-win release-aarch64 release-arm32 \
-        release-all release-everything zstd-win
+        release-all release-everything zstd-win android-arm64
 
 # ===========================================================================
 # Universal build for this host: on x86-64 one binary dispatches its SIMD at runtime
@@ -205,7 +215,7 @@ debug:
 # Clean
 # ===========================================================================
 clean:
-	@rm -rf $(BUILD_DIR) $(WIN_BUILD_DIR) build-arm build-arm64
+	@rm -rf $(BUILD_DIR) $(WIN_BUILD_DIR) build-arm build-arm64 build-android
 	@rm -f $(TARGET) $(WIN_TARGET) ./cwtch_datagen
 	@echo "  CLEAN   done (releases/ left alone)"
 
@@ -245,6 +255,20 @@ release-win:
 	echo "=== Windows Universal x86_64 (runtime dispatch: avx512_vnni | avx512bw | avx2 | scalar) -> $$out ===" ; \
 	$(WIN_CC) $(WIN_BASE_CFLAGS) $(SRCS) -o $$out $(WIN_LDFLAGS)
 	@echo "=== x86_64 Windows release complete ==="
+
+# ===========================================================================
+# Android ARM64 (AArch64 NEON + Dotprod, API 24)
+# Requires the Android NDK and a target-built static libzstd in ANDROID_ZSTD_DIR.
+# ===========================================================================
+android-arm64:
+	@test -x "$(ANDROID_CC)" || { echo "  error: Android NDK clang not found: $(ANDROID_CC)"; exit 1; }
+	@test -f "$(ANDROID_ZSTD_DIR)/lib/libzstd.a" || { echo "  error: Android libzstd.a not found in $(ANDROID_ZSTD_DIR)/lib"; exit 1; }
+	@test -f quantised.bin || { echo "  error: quantised.bin is missing; Cwtch embeds this network at compile time."; exit 1; }
+	@mkdir -p $(RELEASE_DIR)
+	@out="$(RELEASE_DIR)/cwtch_$(VERSION)_android_arm64_neon" ; \
+	echo "=== Android ARM64 NEON + Dotprod (API $(ANDROID_API)) -> $$out ===" ; \
+	$(ANDROID_CC) $(ANDROID_CFLAGS) $(SRCS) -o "$$out" $(ANDROID_LDFLAGS)
+	@echo "=== Android ARM64 build complete ==="
 
 # ===========================================================================
 # Release: aarch64 (Linux)
